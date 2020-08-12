@@ -1,5 +1,7 @@
 import numpy as np
 import sys
+from contextlib import closing
+from io import StringIO
 from gym.envs.toy_text import discrete
 
 UP = 0
@@ -13,10 +15,10 @@ class CliffWalkingEnv(discrete.DiscreteEnv):
     This is a simple implementation of the Gridworld Cliff
     reinforcement learning task.
 
-    Adapted from Example 6.6 (page 145) from Reinforcement Learning: An Introduction
+    Adapted from Example 6.6 (page 106) from Reinforcement Learning: An Introduction
     by Sutton and Barto:
-    http://people.inf.elte.hu/lorincz/Files/RL_2006/SuttonBook.pdf
-    
+    http://incompleteideas.net/book/bookdraft2018jan1.pdf
+
     With inspiration from:
     https://github.com/dennybritz/reinforcement-learning/blob/master/lib/envs/cliff_walking.py
 
@@ -25,7 +27,7 @@ class CliffWalkingEnv(discrete.DiscreteEnv):
         [3, 11] as the goal at bottom-right
         [3, 1..10] as the cliff at bottom-center
 
-    Each time step incurs -1 reward, and stepping into the cliff incurs -100 reward 
+    Each time step incurs -1 reward, and stepping into the cliff incurs -100 reward
     and a reset to the start. An episode terminates when the agent reaches the goal.
     """
     metadata = {'render.modes': ['human', 'ansi']}
@@ -61,8 +63,8 @@ class CliffWalkingEnv(discrete.DiscreteEnv):
     def _limit_coordinates(self, coord):
         """
         Prevent the agent from falling out of the grid world
-        :param coord: 
-        :return: 
+        :param coord:
+        :return:
         """
         coord[0] = min(coord[0], self.shape[0] - 1)
         coord[0] = max(coord[0], 0)
@@ -72,8 +74,8 @@ class CliffWalkingEnv(discrete.DiscreteEnv):
 
     def _calculate_transition_prob(self, current, delta):
         """
-        Determine the outcome for an action. Transition Prob is always 1.0. 
-        :param current: Current position on the grid as (row, col) 
+        Determine the outcome for an action. Transition Prob is always 1.0.
+        :param current: Current position on the grid as (row, col)
         :param delta: Change in position for transition
         :return: (1.0, new_state, reward, done)
         """
@@ -88,7 +90,7 @@ class CliffWalkingEnv(discrete.DiscreteEnv):
         return [(1.0, new_state, -1, is_done)]
 
     def render(self, mode='human'):
-        outfile = sys.stdout
+        outfile = StringIO() if mode == 'ansi' else sys.stdout
 
         for s in range(self.nS):
             position = np.unravel_index(s, self.shape)
@@ -111,3 +113,7 @@ class CliffWalkingEnv(discrete.DiscreteEnv):
             outfile.write(output)
         outfile.write('\n')
 
+        # No need to return anything for human
+        if mode != 'human':
+            with closing(outfile):
+                return outfile.getvalue()
