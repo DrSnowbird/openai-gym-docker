@@ -288,6 +288,42 @@ Learn more here: https://github.com/hardmaru/slimevolleygym
 
 ### Gridworld: A simple 2D grid environment
 
-The Gridworld package provides grid-based environments to help simulate the results for model-based reinforcement learning algorithms. Initial release supports single agent system only.
+The Gridworld package provides grid-based environments to help simulate the results for model-based reinforcement learning algorithms. Initial release supports single agent system only. Some features in this version of software have become obsolete. New features are being added in the software like windygrid environment.
 
 Learn more here: https://github.com/addy1997/Gridworld
+
+### gym-goddard: Goddard's Rocket Problem
+
+An environment for simulating the classical optimal control problem where the thrust of a vertically ascending rocket shall be determined such that it reaches the maximum possible altitude, while being subject to varying aerodynamic drag, gravity and mass. 
+
+Learn more here: https://github.com/osannolik/gym-goddard
+
+### gym-pybullet-drones: Learning Quadcopter Control
+
+A simple environment using [PyBullet](http://github.com/bulletphysics/bullet3) to simulate the dynamics of a [Bitcraze Crazyflie 2.x](https://www.bitcraze.io/documentation/hardware/crazyflie_2_1/crazyflie_2_1-datasheet.pdf) nanoquadrotor
+
+Learn more here: https://github.com/JacopoPan/gym-pybullet-drones
+
+### gym-derk: GPU accelerated MOBA environment
+
+This is a 3v3 MOBA environment where you train creatures to figth each other. It runs entirely on the GPU so you can easily have hundreds of instances running in parallel. There are around 15 items for the creatures, 60 "senses", 5 actions, and ~23 tweakable rewards. It's also possible to benchmark an agent against other agents online. It's available for free for training for personal use, and otherwise costs money; see licensing details on the website.
+
+More here: https://gym.derkgame.com
+
+### gym-abalone: A two-player abstract strategy board game
+
+An implementation of the board game Abalone.
+
+Learn more here: https://github.com/towzeur/gym-abalone
+
+### gym-adserver: Environment for online advertising
+
+An environment that implements a typical [multi-armed bandit scenario](https://en.wikipedia.org/wiki/Multi-armed_bandit) where an [ad server](https://en.wikipedia.org/wiki/Ad_serving) must select the best advertisement to be displayed in a web page. Some example agents are included: Random, epsilon-Greedy, Softmax, and UCB1.
+
+Learn more here: https://github.com/falox/gym-adserver
+
+### gym-autokey: Automated rule-based deductive program verification
+
+An environment for automated rule-based deductive program verification in the KeY verification system.
+
+Learn more here: https://github.com/Flunzmas/gym-autokey
