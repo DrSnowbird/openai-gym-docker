@@ -21,23 +21,34 @@ class Box(Space):
         Box(2,)
 
     """
-    def __init__(self, low, high, shape=None, dtype=np.float32):
-        assert dtype is not None, 'dtype must be explicitly provided. '
+
+    def __init__(self, low, high, shape=None, dtype=np.float32, seed=None):
+        assert dtype is not None, "dtype must be explicitly provided. "
         self.dtype = np.dtype(dtype)
 
         # determine shape if it isn't provided directly
         if shape is not None:
             shape = tuple(shape)
-            assert np.isscalar(low) or low.shape == shape, "low.shape doesn't match provided shape"
-            assert np.isscalar(high) or high.shape == shape, "high.shape doesn't match provided shape"
+            assert (
+                np.isscalar(low) or low.shape == shape
+            ), "low.shape doesn't match provided shape"
+            assert (
+                np.isscalar(high) or high.shape == shape
+            ), "high.shape doesn't match provided shape"
         elif not np.isscalar(low):
             shape = low.shape
-            assert np.isscalar(high) or high.shape == shape, "high.shape doesn't match low.shape"
+            assert (
+                np.isscalar(high) or high.shape == shape
+            ), "high.shape doesn't match low.shape"
         elif not np.isscalar(high):
             shape = high.shape
-            assert np.isscalar(low) or low.shape == shape, "low.shape doesn't match high.shape"
+            assert (
+                np.isscalar(low) or low.shape == shape
+            ), "low.shape doesn't match high.shape"
         else:
-            raise ValueError("shape must be provided or inferred from the shapes of low or high")
+            raise ValueError(
+                "shape must be provided or inferred from the shapes of low or high"
+            )
 
         if np.isscalar(low):
             low = np.full(shape, low, dtype=dtype)
@@ -45,7 +56,7 @@ class Box(Space):
         if np.isscalar(high):
             high = np.full(shape, high, dtype=dtype)
 
-        self.shape = shape
+        self._shape = shape
         self.low = low
         self.high = high
 
@@ -54,11 +65,14 @@ class Box(Space):
                 return np.finfo(dtype).precision
             else:
                 return np.inf
+
         low_precision = _get_precision(self.low.dtype)
         high_precision = _get_precision(self.high.dtype)
         dtype_precision = _get_precision(self.dtype)
         if min(low_precision, high_precision) > dtype_precision:
-            logger.warn("Box bound precision lowered by casting to {}".format(self.dtype))
+            logger.warn(
+                "Box bound precision lowered by casting to {}".format(self.dtype)
+            )
         self.low = self.low.astype(self.dtype)
         self.high = self.high.astype(self.dtype)
 
@@ -66,7 +80,7 @@ class Box(Space):
         self.bounded_below = -np.inf < self.low
         self.bounded_above = np.inf > self.high
 
-        super(Box, self).__init__(self.shape, self.dtype)
+        super(Box, self).__init__(self.shape, self.dtype, seed)
 
     def is_bounded(self, manner="both"):
         below = np.all(self.bounded_below)
@@ -92,40 +106,48 @@ class Box(Space):
         * (-oo, b] : shifted negative exponential distribution
         * (-oo, oo) : normal distribution
         """
-        high = self.high if self.dtype.kind == 'f' \
-                else self.high.astype('int64') + 1
+        high = self.high if self.dtype.kind == "f" else self.high.astype("int64") + 1
         sample = np.empty(self.shape)
 
         # Masking arrays which classify the coordinates according to interval
         # type
-        unbounded   = ~self.bounded_below & ~self.bounded_above
-        upp_bounded = ~self.bounded_below &  self.bounded_above
-        low_bounded =  self.bounded_below & ~self.bounded_above
-        bounded     =  self.bounded_below &  self.bounded_above
-
+        unbounded = ~self.bounded_below & ~self.bounded_above
+        upp_bounded = ~self.bounded_below & self.bounded_above
+        low_bounded = self.bounded_below & ~self.bounded_above
+        bounded = self.bounded_below & self.bounded_above
 
         # Vectorized sampling by interval type
-        sample[unbounded] = self.np_random.normal(
-                size=unbounded[unbounded].shape)
+        sample[unbounded] = self.np_random.normal(size=unbounded[unbounded].shape)
 
-        sample[low_bounded] = self.np_random.exponential(
-            size=low_bounded[low_bounded].shape) + self.low[low_bounded]
+        sample[low_bounded] = (
+            self.np_random.exponential(size=low_bounded[low_bounded].shape)
+            + self.low[low_bounded]
+        )
 
-        sample[upp_bounded] = -self.np_random.exponential(
-            size=upp_bounded[upp_bounded].shape) + self.high[upp_bounded]
+        sample[upp_bounded] = (
+            -self.np_random.exponential(size=upp_bounded[upp_bounded].shape)
+            + self.high[upp_bounded]
+        )
 
-        sample[bounded] = self.np_random.uniform(low=self.low[bounded],
-                                            high=high[bounded],
-                                            size=bounded[bounded].shape)
-        if self.dtype.kind == 'i':
+        sample[bounded] = self.np_random.uniform(
+            low=self.low[bounded], high=high[bounded], size=bounded[bounded].shape
+        )
+        if self.dtype.kind == "i":
             sample = np.floor(sample)
 
         return sample.astype(self.dtype)
 
     def contains(self, x):
-        if isinstance(x, list):
-            x = np.array(x)  # Promote list to array for contains check
-        return x.shape == self.shape and np.all(x >= self.low) and np.all(x <= self.high)
+        if not isinstance(x, np.ndarray):
+            logger.warn("Casting input x to numpy array.")
+            x = np.asarray(x, dtype=self.dtype)
+
+        return (
+            np.can_cast(x.dtype, self.dtype)
+            and x.shape == self.shape
+            and np.all(x >= self.low)
+            and np.all(x <= self.high)
+        )
 
     def to_jsonable(self, sample_n):
         return np.array(sample_n).tolist()
@@ -134,7 +156,12 @@ class Box(Space):
         return [np.asarray(sample) for sample in sample_n]
 
     def __repr__(self):
-        return "Box({}, {}, {}, {})".format(self.low.min(), self.high.max(), self.shape, self.dtype)
+        return f"Box({self.low}, {self.high}, {self.shape}, {self.dtype})"
 
     def __eq__(self, other):
-        return isinstance(other, Box) and (self.shape == other.shape) and np.allclose(self.low, other.low) and np.allclose(self.high, other.high)
+        return (
+            isinstance(other, Box)
+            and (self.shape == other.shape)
+            and np.allclose(self.low, other.low)
+            and np.allclose(self.high, other.high)
+        )

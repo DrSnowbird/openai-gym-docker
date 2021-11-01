@@ -72,19 +72,20 @@ class BlackjackEnv(gym.Env):
     by Sutton and Barto.
     http://incompleteideas.net/book/the-book-2nd.html
     """
-    def __init__(self, natural=False):
+
+    def __init__(self, natural=False, sab=False):
         self.action_space = spaces.Discrete(2)
-        self.observation_space = spaces.Tuple((
-            spaces.Discrete(32),
-            spaces.Discrete(11),
-            spaces.Discrete(2)))
+        self.observation_space = spaces.Tuple(
+            (spaces.Discrete(32), spaces.Discrete(11), spaces.Discrete(2))
+        )
         self.seed()
 
         # Flag to payout 1.5 on a "natural" blackjack win, like casino rules
         # Ref: http://www.bicyclecards.com/how-to-play/blackjack/
         self.natural = natural
-        # Start the first game
-        self.reset()
+
+        # Flag for full agreement with the (Sutton and Barto, 2018) definition. Overrides self.natural
+        self.sab = sab
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
@@ -96,16 +97,25 @@ class BlackjackEnv(gym.Env):
             self.player.append(draw_card(self.np_random))
             if is_bust(self.player):
                 done = True
-                reward = -1.
+                reward = -1.0
             else:
                 done = False
-                reward = 0.
+                reward = 0.0
         else:  # stick: play out the dealers hand, and score
             done = True
             while sum_hand(self.dealer) < 17:
                 self.dealer.append(draw_card(self.np_random))
             reward = cmp(score(self.player), score(self.dealer))
-            if self.natural and is_natural(self.player) and reward == 1.:
+            if self.sab and is_natural(self.player) and not is_natural(self.dealer):
+                # Player automatically wins. Rules consistent with S&B
+                reward = 1.0
+            elif (
+                not self.sab
+                and self.natural
+                and is_natural(self.player)
+                and reward == 1.0
+            ):
+                # Natural gives extra points, but doesn't autowin. Legacy implementation
                 reward = 1.5
         return self._get_obs(), reward, done, {}
 

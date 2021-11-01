@@ -1,8 +1,8 @@
+from abc import abstractmethod
+
 import gym
 from gym import error
 from gym.utils import closer
-
-env_closer = closer.Closer()
 
 
 class Env(object):
@@ -28,15 +28,17 @@ class Env(object):
 
     The methods are accessed publicly as "step", "reset", etc...
     """
+
     # Set this in SOME subclasses
-    metadata = {'render.modes': []}
-    reward_range = (-float('inf'), float('inf'))
+    metadata = {"render.modes": []}
+    reward_range = (-float("inf"), float("inf"))
     spec = None
 
     # Set these in ALL subclasses
     action_space = None
     observation_space = None
 
+    @abstractmethod
     def step(self, action):
         """Run one timestep of the environment's dynamics. When end of
         episode is reached, you are responsible for calling `reset()`
@@ -55,6 +57,7 @@ class Env(object):
         """
         raise NotImplementedError
 
+    @abstractmethod
     def reset(self):
         """Resets the environment to an initial state and returns an initial
         observation.
@@ -70,7 +73,8 @@ class Env(object):
         """
         raise NotImplementedError
 
-    def render(self, mode='human'):
+    @abstractmethod
+    def render(self, mode="human"):
         """Renders the environment.
 
         The set of supported modes varies per environment. (And some
@@ -145,16 +149,16 @@ class Env(object):
 
     def __str__(self):
         if self.spec is None:
-            return '<{} instance>'.format(type(self).__name__)
+            return "<{} instance>".format(type(self).__name__)
         else:
-            return '<{}<{}>>'.format(type(self).__name__, self.spec.id)
+            return "<{}<{}>>".format(type(self).__name__, self.spec.id)
 
     def __enter__(self):
-        """Support with-statement for the environment. """
+        """Support with-statement for the environment."""
         return self
 
     def __exit__(self, *args):
-        """Support with-statement for the environment. """
+        """Support with-statement for the environment."""
         self.close()
         # propagate exception
         return False
@@ -172,11 +176,18 @@ class GoalEnv(Env):
     def reset(self):
         # Enforce that each GoalEnv uses a Goal-compatible observation space.
         if not isinstance(self.observation_space, gym.spaces.Dict):
-            raise error.Error('GoalEnv requires an observation space of type gym.spaces.Dict')
-        for key in ['observation', 'achieved_goal', 'desired_goal']:
+            raise error.Error(
+                "GoalEnv requires an observation space of type gym.spaces.Dict"
+            )
+        for key in ["observation", "achieved_goal", "desired_goal"]:
             if key not in self.observation_space.spaces:
-                raise error.Error('GoalEnv requires the "{}" key to be part of the observation dictionary.'.format(key))
+                raise error.Error(
+                    'GoalEnv requires the "{}" key to be part of the observation dictionary.'.format(
+                        key
+                    )
+                )
 
+    @abstractmethod
     def compute_reward(self, achieved_goal, desired_goal, info):
         """Compute the step reward. This externalizes the reward function and makes
         it dependent on a desired goal and the one that was achieved. If you wish to include
@@ -193,7 +204,7 @@ class GoalEnv(Env):
             goal. Note that the following should always hold true:
 
                 ob, reward, done, info = env.step()
-                assert reward == env.compute_reward(ob['achieved_goal'], ob['goal'], info)
+                assert reward == env.compute_reward(ob['achieved_goal'], ob['desired_goal'], info)
         """
         raise NotImplementedError
 
@@ -210,16 +221,20 @@ class Wrapper(Env):
         Don't forget to call ``super().__init__(env)`` if the subclass overrides :meth:`__init__`.
 
     """
+
     def __init__(self, env):
         self.env = env
-        self.action_space = self.env.action_space
-        self.observation_space = self.env.observation_space
-        self.reward_range = self.env.reward_range
-        self.metadata = self.env.metadata
+
+        self._action_space = None
+        self._observation_space = None
+        self._reward_range = None
+        self._metadata = None
 
     def __getattr__(self, name):
-        if name.startswith('_'):
-            raise AttributeError("attempted to get missing private attribute '{}'".format(name))
+        if name.startswith("_"):
+            raise AttributeError(
+                "attempted to get missing private attribute '{}'".format(name)
+            )
         return getattr(self.env, name)
 
     @property
@@ -230,13 +245,53 @@ class Wrapper(Env):
     def class_name(cls):
         return cls.__name__
 
+    @property
+    def action_space(self):
+        if self._action_space is None:
+            return self.env.action_space
+        return self._action_space
+
+    @action_space.setter
+    def action_space(self, space):
+        self._action_space = space
+
+    @property
+    def observation_space(self):
+        if self._observation_space is None:
+            return self.env.observation_space
+        return self._observation_space
+
+    @observation_space.setter
+    def observation_space(self, space):
+        self._observation_space = space
+
+    @property
+    def reward_range(self):
+        if self._reward_range is None:
+            return self.env.reward_range
+        return self._reward_range
+
+    @reward_range.setter
+    def reward_range(self, value):
+        self._reward_range = value
+
+    @property
+    def metadata(self):
+        if self._metadata is None:
+            return self.env.metadata
+        return self._metadata
+
+    @metadata.setter
+    def metadata(self, value):
+        self._metadata = value
+
     def step(self, action):
         return self.env.step(action)
 
     def reset(self, **kwargs):
         return self.env.reset(**kwargs)
 
-    def render(self, mode='human', **kwargs):
+    def render(self, mode="human", **kwargs):
         return self.env.render(mode, **kwargs)
 
     def close(self):
@@ -249,7 +304,7 @@ class Wrapper(Env):
         return self.env.compute_reward(achieved_goal, desired_goal, info)
 
     def __str__(self):
-        return '<{}{}>'.format(type(self).__name__, self.env)
+        return "<{}{}>".format(type(self).__name__, self.env)
 
     def __repr__(self):
         return str(self)
@@ -268,6 +323,7 @@ class ObservationWrapper(Wrapper):
         observation, reward, done, info = self.env.step(action)
         return self.observation(observation), reward, done, info
 
+    @abstractmethod
     def observation(self, observation):
         raise NotImplementedError
 
@@ -280,6 +336,7 @@ class RewardWrapper(Wrapper):
         observation, reward, done, info = self.env.step(action)
         return observation, self.reward(reward), done, info
 
+    @abstractmethod
     def reward(self, reward):
         raise NotImplementedError
 
@@ -291,8 +348,10 @@ class ActionWrapper(Wrapper):
     def step(self, action):
         return self.env.step(self.action(action))
 
+    @abstractmethod
     def action(self, action):
         raise NotImplementedError
 
+    @abstractmethod
     def reverse_action(self, action):
         raise NotImplementedError
