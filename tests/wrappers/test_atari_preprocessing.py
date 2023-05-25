@@ -1,93 +1,126 @@
 import numpy as np
-import gym
-from gym.wrappers import AtariPreprocessing
 import pytest
 
-pytest.importorskip("gym.envs.atari")
+from gym.spaces import Box, Discrete
+from gym.wrappers import AtariPreprocessing, StepAPICompatibility
+from tests.testing_env import GenericTestEnv, old_step_fn
 
 
-@pytest.fixture(scope="module")
-def env_fn():
-    return lambda: gym.make("PongNoFrameskip-v4")
+class AleTesting:
+    """A testing implementation for the ALE object in atari games."""
+
+    grayscale_obs_space = Box(low=0, high=255, shape=(210, 160), dtype=np.uint8, seed=1)
+    rgb_obs_space = Box(low=0, high=255, shape=(210, 160, 3), dtype=np.uint8, seed=1)
+
+    def lives(self) -> int:
+        """Returns the number of lives in the atari game."""
+        return 1
+
+    def getScreenGrayscale(self, buffer: np.ndarray):
+        """Updates the buffer with a random grayscale observation."""
+        buffer[...] = self.grayscale_obs_space.sample()
+
+    def getScreenRGB(self, buffer: np.ndarray):
+        """Updates the buffer with a random rgb observation."""
+        buffer[...] = self.rgb_obs_space.sample()
 
 
-def test_atari_preprocessing_grayscale(env_fn):
-    import cv2
+class AtariTestingEnv(GenericTestEnv):
+    """A testing environment to replicate the atari (ale-py) environments."""
 
-    env1 = env_fn()
-    env2 = AtariPreprocessing(
-        env_fn(), screen_size=84, grayscale_obs=True, frame_skip=1, noop_max=0
-    )
-    env3 = AtariPreprocessing(
-        env_fn(), screen_size=84, grayscale_obs=False, frame_skip=1, noop_max=0
-    )
-    env4 = AtariPreprocessing(
-        env_fn(),
-        screen_size=84,
-        grayscale_obs=True,
-        frame_skip=1,
-        noop_max=0,
-        grayscale_newaxis=True,
-    )
-    env1.seed(0)
-    env2.seed(0)
-    env3.seed(0)
-    env4.seed(0)
-    obs1 = env1.reset()
-    obs2 = env2.reset()
-    obs3 = env3.reset()
-    obs4 = env4.reset()
-    assert env1.observation_space.shape == (210, 160, 3)
-    assert env2.observation_space.shape == (84, 84)
-    assert env3.observation_space.shape == (84, 84, 3)
-    assert env4.observation_space.shape == (84, 84, 1)
-    assert obs1.shape == (210, 160, 3)
-    assert obs2.shape == (84, 84)
-    assert obs3.shape == (84, 84, 3)
-    assert obs4.shape == (84, 84, 1)
-    assert np.allclose(obs3, cv2.resize(obs1, (84, 84), interpolation=cv2.INTER_AREA))
-    obs3_gray = cv2.cvtColor(obs3, cv2.COLOR_RGB2GRAY)
-    # the edges of the numbers do not render quite the same in the grayscale, so we ignore them
-    assert np.allclose(obs2[10:38], obs3_gray[10:38])
-    # the paddle also do not render quite the same
-    assert np.allclose(obs2[44:], obs3_gray[44:])
-    # now add a channel axis and re-test
-    obs3_gray = obs3_gray.reshape(84, 84, 1)
-    assert np.allclose(obs4[10:38], obs3_gray[10:38])
-    assert np.allclose(obs4[44:], obs3_gray[44:])
+    def __init__(self):
+        super().__init__(
+            observation_space=Box(
+                low=0, high=255, shape=(210, 160, 3), dtype=np.uint8, seed=1
+            ),
+            action_space=Discrete(3, seed=1),
+            step_fn=old_step_fn,
+        )
+        self.ale = AleTesting()
 
-    env1.close()
-    env2.close()
-    env3.close()
-    env4.close()
+    def get_action_meanings(self):
+        """Returns the meanings of each of the actions available to the agent. First index must be 'NOOP'."""
+        return ["NOOP", "UP", "DOWN"]
 
 
-def test_atari_preprocessing_scale(env_fn):
-    # arbitrarily chosen number for stepping into env. and ensuring all observations are in the required range
-    max_test_steps = 10
-
-    for grayscale in [True, False]:
-        for scaled in [True, False]:
-            env = AtariPreprocessing(
-                env_fn(),
+@pytest.mark.parametrize(
+    "env, obs_shape",
+    [
+        (AtariTestingEnv(), (210, 160, 3)),
+        (
+            AtariPreprocessing(
+                StepAPICompatibility(AtariTestingEnv(), output_truncation_bool=True),
                 screen_size=84,
-                grayscale_obs=grayscale,
-                scale_obs=scaled,
+                grayscale_obs=True,
                 frame_skip=1,
                 noop_max=0,
-            )
-            obs = env.reset().flatten()
-            done, step_i = False, 0
-            max_obs = 1 if scaled else 255
-            assert (0 <= obs).all() and (
-                obs <= max_obs
-            ).all(), "Obs. must be in range [0,{}]".format(max_obs)
-            while not done or step_i <= max_test_steps:
-                obs, _, done, _ = env.step(env.action_space.sample())
-                obs = obs.flatten()
-                assert (0 <= obs).all() and (
-                    obs <= max_obs
-                ).all(), "Obs. must be in range [0,{}]".format(max_obs)
-                step_i += 1
+            ),
+            (84, 84),
+        ),
+        (
+            AtariPreprocessing(
+                StepAPICompatibility(AtariTestingEnv(), output_truncation_bool=True),
+                screen_size=84,
+                grayscale_obs=False,
+                frame_skip=1,
+                noop_max=0,
+            ),
+            (84, 84, 3),
+        ),
+        (
+            AtariPreprocessing(
+                StepAPICompatibility(AtariTestingEnv(), output_truncation_bool=True),
+                screen_size=84,
+                grayscale_obs=True,
+                frame_skip=1,
+                noop_max=0,
+                grayscale_newaxis=True,
+            ),
+            (84, 84, 1),
+        ),
+    ],
+)
+def test_atari_preprocessing_grayscale(env, obs_shape):
+    assert env.observation_space.shape == obs_shape
 
-            env.close()
+    # It is not possible to test the outputs as we are not using actual observations.
+    # todo: update when ale-py is compatible with the ci
+
+    env = StepAPICompatibility(
+        env, output_truncation_bool=True
+    )  # using compatibility wrapper since ale-py uses old step API
+
+    obs, _ = env.reset(seed=0)
+    assert obs in env.observation_space
+
+    obs, _, _, _, _ = env.step(env.action_space.sample())
+    assert obs in env.observation_space
+
+    env.close()
+
+
+@pytest.mark.parametrize("grayscale", [True, False])
+@pytest.mark.parametrize("scaled", [True, False])
+def test_atari_preprocessing_scale(grayscale, scaled, max_test_steps=10):
+    # arbitrarily chosen number for stepping into env. and ensuring all observations are in the required range
+    env = AtariPreprocessing(
+        StepAPICompatibility(AtariTestingEnv(), output_truncation_bool=True),
+        screen_size=84,
+        grayscale_obs=grayscale,
+        scale_obs=scaled,
+        frame_skip=1,
+        noop_max=0,
+    )
+
+    obs, _ = env.reset()
+
+    max_obs = 1 if scaled else 255
+    assert np.all(0 <= obs) and np.all(obs <= max_obs)
+
+    terminated, truncated, step_i = False, False, 0
+    while not (terminated or truncated) and step_i <= max_test_steps:
+        obs, _, terminated, truncated, _ = env.step(env.action_space.sample())
+        assert np.all(0 <= obs) and np.all(obs <= max_obs)
+
+        step_i += 1
+    env.close()

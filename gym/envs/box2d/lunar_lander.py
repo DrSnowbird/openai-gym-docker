@@ -1,48 +1,34 @@
-"""
-Rocket trajectory optimization is a classic topic in Optimal Control.
-
-According to Pontryagin's maximum principle it's optimal to fire engine full throttle or
-turn it off. That's the reason this environment is OK to have discreet actions (engine on or off).
-
-The landing pad is always at coordinates (0,0). The coordinates are the first two numbers in the state vector.
-Reward for moving from the top of the screen to the landing pad and zero speed is about 100..140 points.
-If the lander moves away from the landing pad it loses reward. The episode finishes if the lander crashes or
-comes to rest, receiving an additional -100 or +100 points. Each leg with ground contact is +10 points.
-Firing the main engine is -0.3 points each frame. Firing the side engine is -0.03 points each frame.
-Solved is 200 points.
-
-Landing outside the landing pad is possible. Fuel is infinite, so an agent can learn to fly and then land
-on its first attempt. Please see the source code for details.
-
-To see a heuristic landing, run:
-
-python gym/envs/box2d/lunar_lander.py
-
-To play yourself, run:
-
-python examples/agents/keyboard_agent.py LunarLander-v2
-
-Created by Oleg Klimov. Licensed on the same terms as the rest of OpenAI Gym.
-"""
-
+__credits__ = ["Andrea PIERRÉ"]
 
 import math
-import sys
+import warnings
+from typing import TYPE_CHECKING, Optional
+
 import numpy as np
 
-import Box2D
-from Box2D.b2 import (
-    edgeShape,
-    circleShape,
-    fixtureDef,
-    polygonShape,
-    revoluteJointDef,
-    contactListener,
-)
-
 import gym
-from gym import spaces
-from gym.utils import seeding, EzPickle
+from gym import error, spaces
+from gym.error import DependencyNotInstalled
+from gym.utils import EzPickle, colorize
+from gym.utils.step_api_compatibility import step_api_compatibility
+
+try:
+    import Box2D
+    from Box2D.b2 import (
+        circleShape,
+        contactListener,
+        edgeShape,
+        fixtureDef,
+        polygonShape,
+        revoluteJointDef,
+    )
+except ImportError:
+    raise DependencyNotInstalled("box2d is not installed, run `pip install gym[box2d]`")
+
+
+if TYPE_CHECKING:
+    import pygame
+
 
 FPS = 50
 SCALE = 30.0  # affects how fast-paced the game is, forces should be adjusted as well
@@ -87,26 +73,214 @@ class ContactDetector(contactListener):
 
 
 class LunarLander(gym.Env, EzPickle):
-    metadata = {"render.modes": ["human", "rgb_array"], "video.frames_per_second": FPS}
+    """
+    ### Description
+    This environment is a classic rocket trajectory optimization problem.
+    According to Pontryagin's maximum principle, it is optimal to fire the
+    engine at full throttle or turn it off. This is the reason why this
+    environment has discrete actions: engine on or off.
 
-    continuous = False
+    There are two environment versions: discrete or continuous.
+    The landing pad is always at coordinates (0,0). The coordinates are the
+    first two numbers in the state vector.
+    Landing outside of the landing pad is possible. Fuel is infinite, so an agent
+    can learn to fly and then land on its first attempt.
 
-    def __init__(self):
-        EzPickle.__init__(self)
-        self.seed()
-        self.viewer = None
+    To see a heuristic landing, run:
+    ```
+    python gym/envs/box2d/lunar_lander.py
+    ```
+    <!-- To play yourself, run: -->
+    <!-- python examples/agents/keyboard_agent.py LunarLander-v2 -->
 
-        self.world = Box2D.b2World()
+    ### Action Space
+    There are four discrete actions available: do nothing, fire left
+    orientation engine, fire main engine, fire right orientation engine.
+
+    ### Observation Space
+    The state is an 8-dimensional vector: the coordinates of the lander in `x` & `y`, its linear
+    velocities in `x` & `y`, its angle, its angular velocity, and two booleans
+    that represent whether each leg is in contact with the ground or not.
+
+    ### Rewards
+    After every step a reward is granted. The total reward of an episode is the
+    sum of the rewards for all the steps within that episode.
+
+    For each step, the reward:
+    - is increased/decreased the closer/further the lander is to the landing pad.
+    - is increased/decreased the slower/faster the lander is moving.
+    - is decreased the more the lander is tilted (angle not horizontal).
+    - is increased by 10 points for each leg that is in contact with the ground.
+    - is decreased by 0.03 points each frame a side engine is firing.
+    - is decreased by 0.3 points each frame the main engine is firing.
+
+    The episode receive an additional reward of -100 or +100 points for crashing or landing safely respectively.
+
+    An episode is considered a solution if it scores at least 200 points.
+
+    ### Starting State
+    The lander starts at the top center of the viewport with a random initial
+    force applied to its center of mass.
+
+    ### Episode Termination
+    The episode finishes if:
+    1) the lander crashes (the lander body gets in contact with the moon);
+    2) the lander gets outside of the viewport (`x` coordinate is greater than 1);
+    3) the lander is not awake. From the [Box2D docs](https://box2d.org/documentation/md__d_1__git_hub_box2d_docs_dynamics.html#autotoc_md61),
+        a body which is not awake is a body which doesn't move and doesn't
+        collide with any other body:
+    > When Box2D determines that a body (or group of bodies) has come to rest,
+    > the body enters a sleep state which has very little CPU overhead. If a
+    > body is awake and collides with a sleeping body, then the sleeping body
+    > wakes up. Bodies will also wake up if a joint or contact attached to
+    > them is destroyed.
+
+    ### Arguments
+    To use to the _continuous_ environment, you need to specify the
+    `continuous=True` argument like below:
+    ```python
+    import gym
+    env = gym.make(
+        "LunarLander-v2",
+        continuous: bool = False,
+        gravity: float = -10.0,
+        enable_wind: bool = False,
+        wind_power: float = 15.0,
+        turbulence_power: float = 1.5,
+    )
+    ```
+    If `continuous=True` is passed, continuous actions (corresponding to the throttle of the engines) will be used and the
+    action space will be `Box(-1, +1, (2,), dtype=np.float32)`.
+    The first coordinate of an action determines the throttle of the main engine, while the second
+    coordinate specifies the throttle of the lateral boosters.
+    Given an action `np.array([main, lateral])`, the main engine will be turned off completely if
+    `main < 0` and the throttle scales affinely from 50% to 100% for `0 <= main <= 1` (in particular, the
+    main engine doesn't work  with less than 50% power).
+    Similarly, if `-0.5 < lateral < 0.5`, the lateral boosters will not fire at all. If `lateral < -0.5`, the left
+    booster will fire, and if `lateral > 0.5`, the right booster will fire. Again, the throttle scales affinely
+    from 50% to 100% between -1 and -0.5 (and 0.5 and 1, respectively).
+
+    `gravity` dictates the gravitational constant, this is bounded to be within 0 and -12.
+
+    If `enable_wind=True` is passed, there will be wind effects applied to the lander.
+    The wind is generated using the function `tanh(sin(2 k (t+C)) + sin(pi k (t+C)))`.
+    `k` is set to 0.01.
+    `C` is sampled randomly between -9999 and 9999.
+
+    `wind_power` dictates the maximum magnitude of linear wind applied to the craft. The recommended value for `wind_power` is between 0.0 and 20.0.
+    `turbulence_power` dictates the maximum magnitude of rotational wind applied to the craft. The recommended value for `turbulence_power` is between 0.0 and 2.0.
+
+    ### Version History
+    - v2: Count energy spent and in v0.24, added turbulance with wind power and turbulence_power parameters
+    - v1: Legs contact with ground added in state vector; contact with ground
+        give +10 reward points, and -10 if then lose contact; reward
+        renormalized to 200; harder initial random push.
+    - v0: Initial version
+
+    <!-- ### References -->
+
+    ### Credits
+    Created by Oleg Klimov
+    """
+
+    metadata = {
+        "render_modes": ["human", "rgb_array"],
+        "render_fps": FPS,
+    }
+
+    def __init__(
+        self,
+        render_mode: Optional[str] = None,
+        continuous: bool = False,
+        gravity: float = -10.0,
+        enable_wind: bool = False,
+        wind_power: float = 15.0,
+        turbulence_power: float = 1.5,
+    ):
+        EzPickle.__init__(
+            self,
+            render_mode,
+            continuous,
+            gravity,
+            enable_wind,
+            wind_power,
+            turbulence_power,
+        )
+
+        assert (
+            -12.0 < gravity and gravity < 0.0
+        ), f"gravity (current value: {gravity}) must be between -12 and 0"
+        self.gravity = gravity
+
+        if 0.0 > wind_power or wind_power > 20.0:
+            warnings.warn(
+                colorize(
+                    f"WARN: wind_power value is recommended to be between 0.0 and 20.0, (current value: {wind_power})",
+                    "yellow",
+                ),
+            )
+        self.wind_power = wind_power
+
+        if 0.0 > turbulence_power or turbulence_power > 2.0:
+            warnings.warn(
+                colorize(
+                    f"WARN: turbulence_power value is recommended to be between 0.0 and 2.0, (current value: {turbulence_power})",
+                    "yellow",
+                ),
+            )
+        self.turbulence_power = turbulence_power
+
+        self.enable_wind = enable_wind
+        self.wind_idx = np.random.randint(-9999, 9999)
+        self.torque_idx = np.random.randint(-9999, 9999)
+
+        self.screen: pygame.Surface = None
+        self.clock = None
+        self.isopen = True
+        self.world = Box2D.b2World(gravity=(0, gravity))
         self.moon = None
-        self.lander = None
+        self.lander: Optional[Box2D.b2Body] = None
         self.particles = []
 
         self.prev_reward = None
 
+        self.continuous = continuous
+
+        low = np.array(
+            [
+                # these are bounds for position
+                # realistically the environment should have ended
+                # long before we reach more than 50% outside
+                -1.5,
+                -1.5,
+                # velocity bounds is 5x rated speed
+                -5.0,
+                -5.0,
+                -math.pi,
+                -5.0,
+                -0.0,
+                -0.0,
+            ]
+        ).astype(np.float32)
+        high = np.array(
+            [
+                # these are bounds for position
+                # realistically the environment should have ended
+                # long before we reach more than 50% outside
+                1.5,
+                1.5,
+                # velocity bounds is 5x rated speed
+                5.0,
+                5.0,
+                math.pi,
+                5.0,
+                1.0,
+                1.0,
+            ]
+        ).astype(np.float32)
+
         # useful range is -1 .. +1, but spikes can be higher
-        self.observation_space = spaces.Box(
-            -np.inf, np.inf, shape=(8,), dtype=np.float32
-        )
+        self.observation_space = spaces.Box(low, high)
 
         if self.continuous:
             # Action is two floats [main engine, left-right engines].
@@ -117,9 +291,7 @@ class LunarLander(gym.Env, EzPickle):
             # Nop, fire left engine, main engine, right engine
             self.action_space = spaces.Discrete(4)
 
-    def seed(self, seed=None):
-        self.np_random, seed = seeding.np_random(seed)
-        return [seed]
+        self.render_mode = render_mode
 
     def _destroy(self):
         if not self.moon:
@@ -133,7 +305,13 @@ class LunarLander(gym.Env, EzPickle):
         self.world.DestroyBody(self.legs[0])
         self.world.DestroyBody(self.legs[1])
 
-    def reset(self):
+    def reset(
+        self,
+        *,
+        seed: Optional[int] = None,
+        options: Optional[dict] = None,
+    ):
+        super().reset(seed=seed)
         self._destroy()
         self.world.contactListener_keepref = ContactDetector(self)
         self.world.contactListener = self.world.contactListener_keepref
@@ -174,7 +352,7 @@ class LunarLander(gym.Env, EzPickle):
         self.moon.color2 = (0.0, 0.0, 0.0)
 
         initial_y = VIEWPORT_H / SCALE
-        self.lander = self.world.CreateDynamicBody(
+        self.lander: Box2D.b2Body = self.world.CreateDynamicBody(
             position=(VIEWPORT_W / SCALE / 2, initial_y),
             angle=0.0,
             fixtures=fixtureDef(
@@ -188,8 +366,8 @@ class LunarLander(gym.Env, EzPickle):
                 restitution=0.0,
             ),  # 0.99 bouncy
         )
-        self.lander.color1 = (0.5, 0.4, 0.9)
-        self.lander.color2 = (0.3, 0.3, 0.5)
+        self.lander.color1 = (128, 102, 230)
+        self.lander.color2 = (77, 77, 128)
         self.lander.ApplyForceToCenter(
             (
                 self.np_random.uniform(-INITIAL_RANDOM, INITIAL_RANDOM),
@@ -212,8 +390,8 @@ class LunarLander(gym.Env, EzPickle):
                 ),
             )
             leg.ground_contact = False
-            leg.color1 = (0.5, 0.4, 0.9)
-            leg.color2 = (0.3, 0.3, 0.5)
+            leg.color1 = (128, 102, 230)
+            leg.color2 = (77, 77, 128)
             rjd = revoluteJointDef(
                 bodyA=self.lander,
                 bodyB=leg,
@@ -237,7 +415,9 @@ class LunarLander(gym.Env, EzPickle):
 
         self.drawlist = [self.lander] + self.legs
 
-        return self.step(np.array([0, 0]) if self.continuous else 0)[0]
+        if self.render_mode == "human":
+            self.render()
+        return self.step(np.array([0, 0]) if self.continuous else 0)[0], {}
 
     def _create_particle(self, mass, x, y, ttl):
         p = self.world.CreateDynamicBody(
@@ -262,13 +442,46 @@ class LunarLander(gym.Env, EzPickle):
             self.world.DestroyBody(self.particles.pop(0))
 
     def step(self, action):
+        assert self.lander is not None
+
+        # Update wind
+        assert self.lander is not None, "You forgot to call reset()"
+        if self.enable_wind and not (
+            self.legs[0].ground_contact or self.legs[1].ground_contact
+        ):
+            # the function used for wind is tanh(sin(2 k x) + sin(pi k x)),
+            # which is proven to never be periodic, k = 0.01
+            wind_mag = (
+                math.tanh(
+                    math.sin(0.02 * self.wind_idx)
+                    + (math.sin(math.pi * 0.01 * self.wind_idx))
+                )
+                * self.wind_power
+            )
+            self.wind_idx += 1
+            self.lander.ApplyForceToCenter(
+                (wind_mag, 0.0),
+                True,
+            )
+
+            # the function used for torque is tanh(sin(2 k x) + sin(pi k x)),
+            # which is proven to never be periodic, k = 0.01
+            torque_mag = math.tanh(
+                math.sin(0.02 * self.torque_idx)
+                + (math.sin(math.pi * 0.01 * self.torque_idx))
+            ) * (self.turbulence_power)
+            self.torque_idx += 1
+            self.lander.ApplyTorque(
+                (torque_mag),
+                True,
+            )
+
         if self.continuous:
             action = np.clip(action, -1, +1).astype(np.float32)
         else:
-            assert self.action_space.contains(action), "%r (%s) invalid " % (
-                action,
-                type(action),
-            )
+            assert self.action_space.contains(
+                action
+            ), f"{action!r} ({type(action)}) invalid "
 
         # Engines
         tip = (math.sin(self.lander.angle), math.cos(self.lander.angle))
@@ -285,9 +498,8 @@ class LunarLander(gym.Env, EzPickle):
                 assert m_power >= 0.5 and m_power <= 1.0
             else:
                 m_power = 1.0
-            ox = (
-                tip[0] * (4 / SCALE + 2 * dispersion[0]) + side[0] * dispersion[1]
-            )  # 4 is move a bit downwards, +-2 for randomness
+            # 4 is move a bit downwards, +-2 for randomness
+            ox = tip[0] * (4 / SCALE + 2 * dispersion[0]) + side[0] * dispersion[1]
             oy = -tip[1] * (4 / SCALE + 2 * dispersion[0]) - side[1] * dispersion[1]
             impulse_pos = (self.lander.position[0] + ox, self.lander.position[1] + oy)
             p = self._create_particle(
@@ -375,80 +587,140 @@ class LunarLander(gym.Env, EzPickle):
         )  # less fuel spent is better, about -30 for heuristic landing
         reward -= s_power * 0.03
 
-        done = False
+        terminated = False
         if self.game_over or abs(state[0]) >= 1.0:
-            done = True
+            terminated = True
             reward = -100
         if not self.lander.awake:
-            done = True
+            terminated = True
             reward = +100
-        return np.array(state, dtype=np.float32), reward, done, {}
 
-    def render(self, mode="human"):
-        from gym.envs.classic_control import rendering
+        if self.render_mode == "human":
+            self.render()
+        return np.array(state, dtype=np.float32), reward, terminated, False, {}
 
-        if self.viewer is None:
-            self.viewer = rendering.Viewer(VIEWPORT_W, VIEWPORT_H)
-            self.viewer.set_bounds(0, VIEWPORT_W / SCALE, 0, VIEWPORT_H / SCALE)
+    def render(self):
+        if self.render_mode is None:
+            gym.logger.warn(
+                "You are calling render method without specifying any render mode. "
+                "You can specify the render_mode at initialization, "
+                f'e.g. gym("{self.spec.id}", render_mode="rgb_array")'
+            )
+            return
+
+        try:
+            import pygame
+            from pygame import gfxdraw
+        except ImportError:
+            raise DependencyNotInstalled(
+                "pygame is not installed, run `pip install gym[box2d]`"
+            )
+
+        if self.screen is None and self.render_mode == "human":
+            pygame.init()
+            pygame.display.init()
+            self.screen = pygame.display.set_mode((VIEWPORT_W, VIEWPORT_H))
+        if self.clock is None:
+            self.clock = pygame.time.Clock()
+
+        self.surf = pygame.Surface((VIEWPORT_W, VIEWPORT_H))
+
+        pygame.transform.scale(self.surf, (SCALE, SCALE))
+        pygame.draw.rect(self.surf, (255, 255, 255), self.surf.get_rect())
 
         for obj in self.particles:
             obj.ttl -= 0.15
             obj.color1 = (
-                max(0.2, 0.2 + obj.ttl),
-                max(0.2, 0.5 * obj.ttl),
-                max(0.2, 0.5 * obj.ttl),
+                int(max(0.2, 0.15 + obj.ttl) * 255),
+                int(max(0.2, 0.5 * obj.ttl) * 255),
+                int(max(0.2, 0.5 * obj.ttl) * 255),
             )
             obj.color2 = (
-                max(0.2, 0.2 + obj.ttl),
-                max(0.2, 0.5 * obj.ttl),
-                max(0.2, 0.5 * obj.ttl),
+                int(max(0.2, 0.15 + obj.ttl) * 255),
+                int(max(0.2, 0.5 * obj.ttl) * 255),
+                int(max(0.2, 0.5 * obj.ttl) * 255),
             )
 
         self._clean_particles(False)
 
         for p in self.sky_polys:
-            self.viewer.draw_polygon(p, color=(0, 0, 0))
+            scaled_poly = []
+            for coord in p:
+                scaled_poly.append((coord[0] * SCALE, coord[1] * SCALE))
+            pygame.draw.polygon(self.surf, (0, 0, 0), scaled_poly)
+            gfxdraw.aapolygon(self.surf, scaled_poly, (0, 0, 0))
 
         for obj in self.particles + self.drawlist:
             for f in obj.fixtures:
                 trans = f.body.transform
                 if type(f.shape) is circleShape:
-                    t = rendering.Transform(translation=trans * f.shape.pos)
-                    self.viewer.draw_circle(
-                        f.shape.radius, 20, color=obj.color1
-                    ).add_attr(t)
-                    self.viewer.draw_circle(
-                        f.shape.radius, 20, color=obj.color2, filled=False, linewidth=2
-                    ).add_attr(t)
-                else:
-                    path = [trans * v for v in f.shape.vertices]
-                    self.viewer.draw_polygon(path, color=obj.color1)
-                    path.append(path[0])
-                    self.viewer.draw_polyline(path, color=obj.color2, linewidth=2)
+                    pygame.draw.circle(
+                        self.surf,
+                        color=obj.color1,
+                        center=trans * f.shape.pos * SCALE,
+                        radius=f.shape.radius * SCALE,
+                    )
+                    pygame.draw.circle(
+                        self.surf,
+                        color=obj.color2,
+                        center=trans * f.shape.pos * SCALE,
+                        radius=f.shape.radius * SCALE,
+                    )
 
-        for x in [self.helipad_x1, self.helipad_x2]:
-            flagy1 = self.helipad_y
-            flagy2 = flagy1 + 50 / SCALE
-            self.viewer.draw_polyline([(x, flagy1), (x, flagy2)], color=(1, 1, 1))
-            self.viewer.draw_polygon(
-                [
-                    (x, flagy2),
-                    (x, flagy2 - 10 / SCALE),
-                    (x + 25 / SCALE, flagy2 - 5 / SCALE),
-                ],
-                color=(0.8, 0.8, 0),
+                else:
+                    path = [trans * v * SCALE for v in f.shape.vertices]
+                    pygame.draw.polygon(self.surf, color=obj.color1, points=path)
+                    gfxdraw.aapolygon(self.surf, path, obj.color1)
+                    pygame.draw.aalines(
+                        self.surf, color=obj.color2, points=path, closed=True
+                    )
+
+                for x in [self.helipad_x1, self.helipad_x2]:
+                    x = x * SCALE
+                    flagy1 = self.helipad_y * SCALE
+                    flagy2 = flagy1 + 50
+                    pygame.draw.line(
+                        self.surf,
+                        color=(255, 255, 255),
+                        start_pos=(x, flagy1),
+                        end_pos=(x, flagy2),
+                        width=1,
+                    )
+                    pygame.draw.polygon(
+                        self.surf,
+                        color=(204, 204, 0),
+                        points=[
+                            (x, flagy2),
+                            (x, flagy2 - 10),
+                            (x + 25, flagy2 - 5),
+                        ],
+                    )
+                    gfxdraw.aapolygon(
+                        self.surf,
+                        [(x, flagy2), (x, flagy2 - 10), (x + 25, flagy2 - 5)],
+                        (204, 204, 0),
+                    )
+
+        self.surf = pygame.transform.flip(self.surf, False, True)
+
+        if self.render_mode == "human":
+            assert self.screen is not None
+            self.screen.blit(self.surf, (0, 0))
+            pygame.event.pump()
+            self.clock.tick(self.metadata["render_fps"])
+            pygame.display.flip()
+        elif self.render_mode == "rgb_array":
+            return np.transpose(
+                np.array(pygame.surfarray.pixels3d(self.surf)), axes=(1, 0, 2)
             )
 
-        return self.viewer.render(return_rgb_array=mode == "rgb_array")
-
     def close(self):
-        if self.viewer is not None:
-            self.viewer.close()
-            self.viewer = None
+        if self.screen is not None:
+            import pygame
 
-
-class LunarLanderContinuous(LunarLander):
-    continuous = True
+            pygame.display.quit()
+            pygame.quit()
+            self.isopen = False
 
 
 def heuristic(env, s):
@@ -460,15 +732,16 @@ def heuristic(env, s):
     Args:
         env: The environment
         s (list): The state. Attributes:
-                  s[0] is the horizontal coordinate
-                  s[1] is the vertical coordinate
-                  s[2] is the horizontal speed
-                  s[3] is the vertical speed
-                  s[4] is the angle
-                  s[5] is the angular speed
-                  s[6] 1 if first leg has contact, else 0
-                  s[7] 1 if second leg has contact, else 0
-    returns:
+            s[0] is the horizontal coordinate
+            s[1] is the vertical coordinate
+            s[2] is the horizontal speed
+            s[3] is the vertical speed
+            s[4] is the angle
+            s[5] is the angular speed
+            s[6] 1 if first leg has contact, else 0
+            s[7] 1 if second leg has contact, else 0
+
+    Returns:
          a: The heuristic to be fed into the step function defined above to determine the next step and reward.
     """
 
@@ -505,29 +778,39 @@ def heuristic(env, s):
 
 
 def demo_heuristic_lander(env, seed=None, render=False):
-    env.seed(seed)
+
     total_reward = 0
     steps = 0
-    s = env.reset()
+    s, info = env.reset(seed=seed)
     while True:
         a = heuristic(env, s)
-        s, r, done, info = env.step(a)
+        s, r, terminated, truncated, info = step_api_compatibility(env.step(a), True)
         total_reward += r
 
         if render:
             still_open = env.render()
-            if still_open == False:
+            if still_open is False:
                 break
 
-        if steps % 20 == 0 or done:
-            print("observations:", " ".join(["{:+0.2f}".format(x) for x in s]))
-            print("step {} total_reward {:+0.2f}".format(steps, total_reward))
+        if steps % 20 == 0 or terminated or truncated:
+            print("observations:", " ".join([f"{x:+0.2f}" for x in s]))
+            print(f"step {steps} total_reward {total_reward:+0.2f}")
         steps += 1
-        if done:
+        if terminated or truncated:
             break
     if render:
         env.close()
     return total_reward
+
+
+class LunarLanderContinuous:
+    def __init__(self):
+        raise error.Error(
+            "Error initializing LunarLanderContinuous Environment.\n"
+            "Currently, we do not support initializing this mode of environment by calling the class directly.\n"
+            "To use this environment, instead create it by specifying the continuous keyword in gym.make, i.e.\n"
+            'gym.make("LunarLander-v2", continuous=True)'
+        )
 
 
 if __name__ == "__main__":

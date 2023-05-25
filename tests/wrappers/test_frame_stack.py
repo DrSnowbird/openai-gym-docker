@@ -1,8 +1,6 @@
+import numpy as np
 import pytest
 
-pytest.importorskip("gym.envs.atari")
-
-import numpy as np
 import gym
 from gym.wrappers import FrameStack
 
@@ -12,7 +10,7 @@ except ImportError:
     lz4 = None
 
 
-@pytest.mark.parametrize("env_id", ["CartPole-v1", "Pendulum-v1", "Pong-v0"])
+@pytest.mark.parametrize("env_id", ["CartPole-v1", "Pendulum-v1", "CarRacing-v2"])
 @pytest.mark.parametrize("num_stack", [2, 3, 4])
 @pytest.mark.parametrize(
     "lz4_compress",
@@ -27,24 +25,28 @@ except ImportError:
     ],
 )
 def test_frame_stack(env_id, num_stack, lz4_compress):
-    env = gym.make(env_id)
-    env.seed(0)
+    env = gym.make(env_id, disable_env_checker=True)
     shape = env.observation_space.shape
     env = FrameStack(env, num_stack, lz4_compress)
     assert env.observation_space.shape == (num_stack,) + shape
     assert env.observation_space.dtype == env.env.observation_space.dtype
 
-    dup = gym.make(env_id)
-    dup.seed(0)
+    dup = gym.make(env_id, disable_env_checker=True)
 
-    obs = env.reset()
-    dup_obs = dup.reset()
+    obs, _ = env.reset(seed=0)
+    dup_obs, _ = dup.reset(seed=0)
     assert np.allclose(obs[-1], dup_obs)
 
-    for _ in range(num_stack ** 2):
+    for _ in range(num_stack**2):
         action = env.action_space.sample()
-        dup_obs, _, _, _ = dup.step(action)
-        obs, _, _, _ = env.step(action)
+        dup_obs, _, dup_terminated, dup_truncated, _ = dup.step(action)
+        obs, _, terminated, truncated, _ = env.step(action)
+
+        assert dup_terminated == terminated
+        assert dup_truncated == truncated
         assert np.allclose(obs[-1], dup_obs)
+
+        if terminated or truncated:
+            break
 
     assert len(obs) == num_stack

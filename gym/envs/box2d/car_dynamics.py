@@ -4,21 +4,21 @@ Top-down car dynamics simulation.
 Some ideas are taken from this great tutorial http://www.iforce2d.net/b2dtut/top-down-car by Chris Campbell.
 This simulation is a bit more detailed, with wheels rotation.
 
-Created by Oleg Klimov. Licensed on the same terms as the rest of OpenAI Gym.
+Created by Oleg Klimov
 """
 
-import numpy as np
 import math
+
 import Box2D
-from Box2D.b2 import (
-    edgeShape,
-    circleShape,
-    fixtureDef,
-    polygonShape,
-    revoluteJointDef,
-    contactListener,
-    shape,
-)
+import numpy as np
+
+from gym.error import DependencyNotInstalled
+
+try:
+    from Box2D.b2 import fixtureDef, polygonShape, revoluteJointDef
+except ImportError:
+    raise DependencyNotInstalled("box2D is not installed, run `pip install gym[box2d]`")
+
 
 SIZE = 0.02
 ENGINE_POWER = 100000000 * SIZE * SIZE
@@ -42,15 +42,15 @@ HULL_POLY3 = [
     (-25, +20),
 ]
 HULL_POLY4 = [(-50, -120), (+50, -120), (+50, -90), (-50, -90)]
-WHEEL_COLOR = (0.0, 0.0, 0.0)
-WHEEL_WHITE = (0.3, 0.3, 0.3)
-MUD_COLOR = (0.4, 0.4, 0.0)
+WHEEL_COLOR = (0, 0, 0)
+WHEEL_WHITE = (77, 77, 77)
+MUD_COLOR = (102, 102, 0)
 
 
 class Car:
     def __init__(self, world, init_angle, init_x, init_y):
-        self.world = world
-        self.hull = self.world.CreateDynamicBody(
+        self.world: Box2D.b2World = world
+        self.hull: Box2D.b2Body = self.world.CreateDynamicBody(
             position=(init_x, init_y),
             angle=init_angle,
             fixtures=[
@@ -260,15 +260,40 @@ class Car:
                 True,
             )
 
-    def draw(self, viewer, draw_particles=True):
+    def draw(self, surface, zoom, translation, angle, draw_particles=True):
+        import pygame.draw
+
         if draw_particles:
             for p in self.particles:
-                viewer.draw_polyline(p.poly, color=p.color, linewidth=5)
+                poly = [pygame.math.Vector2(c).rotate_rad(angle) for c in p.poly]
+                poly = [
+                    (
+                        coords[0] * zoom + translation[0],
+                        coords[1] * zoom + translation[1],
+                    )
+                    for coords in poly
+                ]
+                pygame.draw.lines(
+                    surface, color=p.color, points=poly, width=2, closed=False
+                )
+
         for obj in self.drawlist:
             for f in obj.fixtures:
                 trans = f.body.transform
                 path = [trans * v for v in f.shape.vertices]
-                viewer.draw_polygon(path, color=obj.color)
+                path = [(coords[0], coords[1]) for coords in path]
+                path = [pygame.math.Vector2(c).rotate_rad(angle) for c in path]
+                path = [
+                    (
+                        coords[0] * zoom + translation[0],
+                        coords[1] * zoom + translation[1],
+                    )
+                    for coords in path
+                ]
+                color = [int(c * 255) for c in obj.color]
+
+                pygame.draw.polygon(surface, color=color, points=path)
+
                 if "phase" not in obj.__dict__:
                     continue
                 a1 = obj.phase
@@ -289,7 +314,20 @@ class Car:
                     (+WHEEL_W * SIZE, +WHEEL_R * c2 * SIZE),
                     (-WHEEL_W * SIZE, +WHEEL_R * c2 * SIZE),
                 ]
-                viewer.draw_polygon([trans * v for v in white_poly], color=WHEEL_WHITE)
+                white_poly = [trans * v for v in white_poly]
+
+                white_poly = [(coords[0], coords[1]) for coords in white_poly]
+                white_poly = [
+                    pygame.math.Vector2(c).rotate_rad(angle) for c in white_poly
+                ]
+                white_poly = [
+                    (
+                        coords[0] * zoom + translation[0],
+                        coords[1] * zoom + translation[1],
+                    )
+                    for coords in white_poly
+                ]
+                pygame.draw.polygon(surface, color=WHEEL_WHITE, points=white_poly)
 
     def _create_particle(self, point1, point2, grass):
         class Particle:

@@ -1,10 +1,15 @@
-import pytest
+from typing import Optional
+
 import numpy as np
+import pytest
 
 from gym import core, spaces
+from gym.wrappers import OrderEnforcing, TimeLimit
 
 
 class ArgumentEnv(core.Env):
+    observation_space = spaces.Box(low=0, high=1, shape=(1,))
+    action_space = spaces.Box(low=0, high=1, shape=(1,))
     calls = 0
 
     def __init__(self, arg):
@@ -16,8 +21,9 @@ class UnittestEnv(core.Env):
     observation_space = spaces.Box(low=0, high=255, shape=(64, 64, 3), dtype=np.uint8)
     action_space = spaces.Discrete(3)
 
-    def reset(self):
-        return self.observation_space.sample()  # Dummy observation
+    def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
+        super().reset(seed=seed)
+        return self.observation_space.sample(), {"info": "dummy"}
 
     def step(self, action):
         observation = self.observation_space.sample()  # Dummy observation
@@ -31,16 +37,31 @@ class UnknownSpacesEnv(core.Env):
     on external resources), it is not encouraged.
     """
 
-    def reset(self):
+    def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
+        super().reset(seed=seed)
         self.observation_space = spaces.Box(
             low=0, high=255, shape=(64, 64, 3), dtype=np.uint8
         )
         self.action_space = spaces.Discrete(3)
-        return self.observation_space.sample()  # Dummy observation
+        return self.observation_space.sample(), {}  # Dummy observation with info
 
     def step(self, action):
         observation = self.observation_space.sample()  # Dummy observation
         return (observation, 0.0, False, {})
+
+
+class OldStyleEnv(core.Env):
+    """This environment doesn't accept any arguments in reset, ideally we want to support this too (for now)"""
+
+    def __init__(self):
+        pass
+
+    def reset(self):
+        super().reset()
+        return 0
+
+    def step(self, action):
+        return 0, 0, False, {}
 
 
 class NewPropertyWrapper(core.Wrapper):
@@ -80,7 +101,7 @@ properties = [
     },
     {"action_space": spaces.Discrete(2)},
     {"reward_range": (-1.0, 1.0)},
-    {"metadata": {"render.modes": ["human", "rgb_array"]}},
+    {"metadata": {"render_modes": ["human", "rgb_array_list"]}},
     {
         "observation_space": spaces.Box(
             low=0.0, high=1.0, shape=(64, 64, 3), dtype=np.float32
@@ -108,3 +129,11 @@ def test_wrapper_property_forwarding(class_, props):
     all_properties = {"observation_space", "action_space", "reward_range", "metadata"}
     for key in all_properties - props.keys():
         assert getattr(env, key) == getattr(env.unwrapped, key)
+
+
+def test_compatibility_with_old_style_env():
+    env = OldStyleEnv()
+    env = OrderEnforcing(env)
+    env = TimeLimit(env)
+    obs = env.reset()
+    assert obs == 0
